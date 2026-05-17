@@ -106,7 +106,6 @@ def require_auth(f):
                     leeway=timedelta(seconds=10),
                 )
             request.user_id = payload["sub"]
-            return f(*args, **kwargs)
         except Exception as e:
             # hs256
             try:
@@ -118,9 +117,10 @@ def require_auth(f):
                     leeway=timedelta(seconds=10),
                 )
                 request.user_id = payload["sub"]
-                return f(*args, **kwargs)
             except Exception:
                 return jsonify({"error": "invalid_token"}), 401
+                
+        return f(*args, **kwargs)
     return decorated
 
 ## the above was copy pasted shit because i dont know the supabase stuff good enough
