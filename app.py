@@ -158,7 +158,7 @@ def generate_code():
         return jsonify({"error": "profile_not_found"}), 404
     tester_uuid = profiles[0]["jarshield_uuid"]
 
-    projects = db_get("projects", {"name": f"eq.{project_name}", "select": "id,owner_id,webhook_url,webhook_color,log_generate"})
+    projects = db_get("projects", {"name": f"eq.{project_name}", "select": "id,owner_id,webhook_url,color_generate,log_generate"})
     if not projects:
         return jsonify({"error": "unauthorized"}), 403
     project = projects[0]
@@ -206,7 +206,7 @@ def generate_code():
     
     webhook_url = project.get("webhook_url")
     if webhook_url and project.get("log_generate"):
-        webhook_color = project.get("webhook_color") or "#3b82f6"
+        webhook_color = project.get("color_generate") or "#3b82f6"
         try:
             color_int = int(webhook_color.lstrip('#'), 16)
         except Exception:
@@ -230,9 +230,15 @@ def generate_code():
 def send_incorrect_webhook(project, code):
     webhook_url = project.get("webhook_url")
     if webhook_url and project.get("log_incorrect"):
+        webhook_color = project.get("color_incorrect") or "#ef4444"
+        try:
+            color_int = int(webhook_color.lstrip('#'), 16)
+        except Exception:
+            color_int = 16711680
+            
         embed = {
             "title": "Incorrect code",
-            "color": 16711680,
+            "color": color_int,
             "description": f"**Code:** `{code}`\n**Entered on:** <t:{int(datetime.now().timestamp())}:R>",
             "footer": {
                 "text": "jarshield audit logs - https://manage.jarshield.link/ • made by 4xnico"
@@ -252,7 +258,7 @@ def validate_code():
     if not project_name or not code or len(code) < 6:
         return jsonify({"success": False, "reason": "invalid_input"}), 400
 
-    projects = db_get("projects", {"name": f"eq.{project_name}", "select": "id,decryption_key,webhook_url,webhook_color,log_play,log_incorrect"})
+    projects = db_get("projects", {"name": f"eq.{project_name}", "select": "id,decryption_key,webhook_url,color_play,color_incorrect,log_play,log_incorrect"})
     if not projects:
         log_audit(None, None, None, "validate_code", False, "project_not_found", request.remote_addr)
         return jsonify({"success": False, "reason": "invalid_code"})
@@ -314,7 +320,7 @@ def validate_code():
     
     webhook_url = projects[0].get("webhook_url")
     if webhook_url and projects[0].get("log_play"):
-        webhook_color = projects[0].get("webhook_color") or "#3b82f6"
+        webhook_color = projects[0].get("color_play") or "#3b82f6"
         try:
             color_int = int(webhook_color.lstrip('#'), 16)
         except Exception:
@@ -384,24 +390,67 @@ def update_project_key(project_id):
 @app.route("/api/projects/<project_id>/webhook", methods=["PUT"])
 @require_auth
 def update_project_webhook(project_id):
-    owns = db_get("projects", {"id": f"eq.{project_id}", "owner_id": f"eq.{request.user_id}", "select": "id"})
+    owns = db_get("projects", {"id": f"eq.{project_id}", "owner_id": f"eq.{request.user_id}", "select": "*"})
     if not owns:
         return jsonify({"error": "unauthorized"}), 403
+    old_project = owns[0]
 
     data = request.get_json() or {}
     webhook_url = data.get("webhook_url", "").strip()
-    webhook_color = data.get("webhook_color", "#3b82f6").strip()
+    color_play = data.get("color_play", "#3b82f6").strip()
+    color_generate = data.get("color_generate", "#3b82f6").strip()
+    color_incorrect = data.get("color_incorrect", "#ef4444").strip()
+    color_update = data.get("color_update", "#ffffff").strip()
     log_generate = bool(data.get("log_generate", False))
     log_play = bool(data.get("log_play", False))
     log_incorrect = bool(data.get("log_incorrect", False))
     
+    changes = []
+    if (old_project.get("webhook_url") or "") != webhook_url:
+        changes.append("Webhook URL modified" if webhook_url else "Webhook URL removed")
+    if bool(old_project.get("log_generate")) != log_generate:
+        changes.append("Enabled code generation logs" if log_generate else "Disabled code generation logs")
+    if bool(old_project.get("log_play")) != log_play:
+        changes.append("Enabled mod played logs" if log_play else "Disabled mod played logs")
+    if bool(old_project.get("log_incorrect")) != log_incorrect:
+        changes.append("Enabled incorrect code alert" if log_incorrect else "Disabled incorrect code alert")
+    if (old_project.get("color_play") != color_play or 
+        old_project.get("color_generate") != color_generate or 
+        old_project.get("color_incorrect") != color_incorrect or 
+        old_project.get("color_update") != color_update):
+        changes.append("Updated embed colors")
+    
     db_patch("projects", {"id": f"eq.{project_id}"}, {
         "webhook_url": webhook_url or None, 
-        "webhook_color": webhook_color,
+        "color_play": color_play,
+        "color_generate": color_generate,
+        "color_incorrect": color_incorrect,
+        "color_update": color_update,
         "log_generate": log_generate,
         "log_play": log_play,
         "log_incorrect": log_incorrect
     })
+    
+    if webhook_url and changes:
+        try:
+            color_int = int(color_update.lstrip('#'), 16)
+        except Exception:
+            color_int = 16777215
+            
+        changes_str = "\n".join(f"- {c}" for c in changes)
+        embed = {
+            "title": f"Webhook configuration updated for {old_project['name']}",
+            "color": color_int,
+            "description": f"**Changes**\n{changes_str}",
+            "footer": {
+                "text": "jarshield audit logs - https://manage.jarshield.link/ • made by 4xnico"
+            }
+        }
+        try:
+            http.post(webhook_url, json={"embeds": [embed]}, timeout=2)
+        except Exception:
+            pass
+
     return jsonify({"success": True})
 
 @app.route("/api/projects/by-name/<project_name>/key", methods=["PUT"])
