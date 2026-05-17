@@ -158,12 +158,13 @@ def generate_code():
         return jsonify({"error": "profile_not_found"}), 404
     tester_uuid = profiles[0]["jarshield_uuid"]
 
-    projects = db_get("projects", {"name": f"eq.{project_name}", "select": "id,owner_id"})
+    projects = db_get("projects", {"name": f"eq.{project_name}", "select": "id,owner_id,webhook_url,webhook_color,log_generate"})
     if not projects:
         return jsonify({"error": "unauthorized"}), 403
     project = projects[0]
     project_id = project["id"]
 
+    note_str = ""
     is_owner = project["owner_id"] == request.user_id
     if not is_owner:
         testers = db_get("project_testers", {
@@ -173,6 +174,11 @@ def generate_code():
         })
         if not testers:
             return jsonify({"error": "unauthorized"}), 403
+        note = testers[0].get("note")
+        if note:
+            note_str = f' "{note}"'
+    else:
+        note_str = ' *(Owner)*'
 
     since = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()
     recent = db_get("launch_codes", {
@@ -197,19 +203,56 @@ def generate_code():
     })
 
     log_audit(project_id, request.user_id, tester_uuid, "generate_code", True, None, request.remote_addr)
+    
+    webhook_url = project.get("webhook_url")
+    if webhook_url and project.get("log_generate"):
+        webhook_color = project.get("webhook_color") or "#3b82f6"
+        try:
+            color_int = int(webhook_color.lstrip('#'), 16)
+        except Exception:
+            color_int = 3900150
+            
+        embed = {
+            "title": f"Code generated: {project_name}",
+            "color": color_int,
+            "description": f"**Code:** `{raw_code}`\n**User:** `{tester_uuid}`{note_str}\n**Generated on:** <t:{int(datetime.now().timestamp())}:R>",
+            "footer": {
+                "text": "jarshield audit logs - https://manage.jarshield.link/ • made by 4xnico"
+            }
+        }
+        try:
+            http.post(webhook_url, json={"embeds": [embed]}, timeout=2)
+        except Exception:
+            pass
+
     return jsonify({"code": raw_code, "expires_in": 15})
+
+def send_incorrect_webhook(project, code):
+    webhook_url = project.get("webhook_url")
+    if webhook_url and project.get("log_incorrect"):
+        embed = {
+            "title": "Incorrect code",
+            "color": 16711680,
+            "description": f"**Code:** `{code}`\n**Entered on:** <t:{int(datetime.now().timestamp())}:R>",
+            "footer": {
+                "text": "jarshield audit logs - https://manage.jarshield.link/ • made by 4xnico"
+            }
+        }
+        try:
+            http.post(webhook_url, json={"embeds": [embed]}, timeout=2)
+        except Exception:
+            pass
 
 @app.route("/api/codes/validate", methods=["POST"])
 def validate_code():
     data = request.get_json(force=True, silent=True) or {}
-    # accept fields from either JSON body or URL query params
     project_name = (data.get("project_name") or request.args.get("project_name", "")).strip().lower()
     code = (data.get("code") or request.args.get("code", "")).strip().upper()
 
-    if not project_name or not code:
+    if not project_name or not code or len(code) < 6:
         return jsonify({"success": False, "reason": "invalid_input"}), 400
 
-    projects = db_get("projects", {"name": f"eq.{project_name}", "select": "id,decryption_key"})
+    projects = db_get("projects", {"name": f"eq.{project_name}", "select": "id,decryption_key,webhook_url,webhook_color,log_play,log_incorrect"})
     if not projects:
         log_audit(None, None, None, "validate_code", False, "project_not_found", request.remote_addr)
         return jsonify({"success": False, "reason": "invalid_code"})
@@ -218,35 +261,78 @@ def validate_code():
     decryption_key = projects[0].get("decryption_key")
     code_hash = hashlib.sha256(code.encode()).hexdigest()
 
-    codes = db_get("launch_codes", {"project_id": f"eq.{project_id}", "code_hash": f"eq.{code_hash}", "select": "*"})
+    codes = db_get("launch_codes", {
+        "project_id": f"eq.{project_id}",
+        "code_hash": f"eq.{code_hash}",
+        "select": "*",
+        "limit": "1"
+    })
     if not codes:
         log_audit(project_id, None, None, "validate_code", False, "code_not_found", request.remote_addr)
+        send_incorrect_webhook(projects[0], code)
         return jsonify({"success": False, "reason": "invalid_code"})
 
     rec = codes[0]
 
+    if rec.get("code_hash") != code_hash:
+        log_audit(project_id, None, None, "validate_code", False, "hash_mismatch", request.remote_addr)
+        send_incorrect_webhook(projects[0], code)
+        return jsonify({"success": False, "reason": "invalid_code"})
+
     if rec.get("used_at"):
         log_audit(project_id, rec["user_id"], rec["tester_uuid"], "validate_code", False, "already_used", request.remote_addr)
+        send_incorrect_webhook(projects[0], code)
         return jsonify({"success": False, "reason": "invalid_code"})
 
     expires_at = datetime.fromisoformat(rec["expires_at"].replace("Z", "+00:00"))
     if datetime.now(timezone.utc) > expires_at:
         log_audit(project_id, rec["user_id"], rec["tester_uuid"], "validate_code", False, "expired", request.remote_addr)
+        send_incorrect_webhook(projects[0], code)
         return jsonify({"success": False, "reason": "invalid_code"})
 
+    note_str = ""
     is_owner = db_get("projects", {"id": f"eq.{project_id}", "owner_id": f"eq.{rec['user_id']}", "select": "id"})
     if not is_owner:
         still_tester = db_get("project_testers", {
             "project_id": f"eq.{project_id}",
             "tester_uuid": f"eq.{rec['tester_uuid']}",
-            "select": "id"
+            "select": "id,note"
         })
         if not still_tester:
             log_audit(project_id, rec["user_id"], rec["tester_uuid"], "validate_code", False, "access_revoked", request.remote_addr)
+            send_incorrect_webhook(projects[0], code)
             return jsonify({"success": False, "reason": "invalid_code"})
+        
+        note = still_tester[0].get("note")
+        if note:
+            note_str = f' "{note}"'
+    else:
+        note_str = ' *(Owner)*'
 
     db_patch("launch_codes", {"id": f"eq.{rec['id']}"}, {"used_at": datetime.now(timezone.utc).isoformat()})
     log_audit(project_id, rec["user_id"], rec["tester_uuid"], "validate_code", True, None, request.remote_addr)
+    
+    webhook_url = projects[0].get("webhook_url")
+    if webhook_url and projects[0].get("log_play"):
+        webhook_color = projects[0].get("webhook_color") or "#3b82f6"
+        try:
+            color_int = int(webhook_color.lstrip('#'), 16)
+        except Exception:
+            color_int = 3900150
+            
+        embed = {
+            "title": f"Playing mod: {project_name}",
+            "color": color_int,
+            "description": f"**Project:** {project_name}\n**User:** `{rec['tester_uuid']}`{note_str}\n**Code used:** `{code}`\n**Accessed on:** <t:{int(datetime.now().timestamp())}:R>",
+            "footer": {
+                "text": f"jarshield audit logs - https://manage.jarshield.link/ • made by 4xnico"
+            }
+        }
+        try:
+            http.post(webhook_url, json={"embeds": [embed]}, timeout=2)
+        except Exception:
+            pass
+
     return jsonify({"success": True, "tester_uuid": rec["tester_uuid"], "decryption_key": decryption_key})
 
 @app.route("/api/projects", methods=["GET"])
@@ -293,6 +379,29 @@ def update_project_key(project_id):
     key = data.get("decryption_key", "").strip()
     
     db_patch("projects", {"id": f"eq.{project_id}"}, {"decryption_key": key or None})
+    return jsonify({"success": True})
+
+@app.route("/api/projects/<project_id>/webhook", methods=["PUT"])
+@require_auth
+def update_project_webhook(project_id):
+    owns = db_get("projects", {"id": f"eq.{project_id}", "owner_id": f"eq.{request.user_id}", "select": "id"})
+    if not owns:
+        return jsonify({"error": "unauthorized"}), 403
+
+    data = request.get_json() or {}
+    webhook_url = data.get("webhook_url", "").strip()
+    webhook_color = data.get("webhook_color", "#3b82f6").strip()
+    log_generate = bool(data.get("log_generate", False))
+    log_play = bool(data.get("log_play", False))
+    log_incorrect = bool(data.get("log_incorrect", False))
+    
+    db_patch("projects", {"id": f"eq.{project_id}"}, {
+        "webhook_url": webhook_url or None, 
+        "webhook_color": webhook_color,
+        "log_generate": log_generate,
+        "log_play": log_play,
+        "log_incorrect": log_incorrect
+    })
     return jsonify({"success": True})
 
 @app.route("/api/projects/by-name/<project_name>/key", methods=["PUT"])
