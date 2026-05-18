@@ -123,7 +123,6 @@ def require_auth(f):
         return f(*args, **kwargs)
     return decorated
 
-## the above was copy pasted shit because i dont know the supabase stuff good enough
 
 # --- routes ---
 
@@ -170,7 +169,7 @@ def generate_code():
         testers = db_get("project_testers", {
             "project_id": f"eq.{project_id}",
             "tester_uuid": f"eq.{tester_uuid}",
-            "select": "id"
+            "select": "id,note"
         })
         if not testers:
             return jsonify({"error": "unauthorized"}), 403
