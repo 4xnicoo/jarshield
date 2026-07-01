@@ -216,7 +216,7 @@ def generate_code():
             "color": color_int,
             "description": f"**Code:** `{raw_code}`\n**User:** `{tester_uuid}`{note_str}\n**Generated on:** <t:{int(datetime.now().timestamp())}:R>",
             "footer": {
-                "text": "jarshield audit logs - https://manage.jarshield.link/ • made by 4xnico"
+                "text": "jarshield audit logs - https://jarshield.link/manage/ • made by 4xnico"
             }
         }
         try:
@@ -240,7 +240,7 @@ def send_incorrect_webhook(project, code):
             "color": color_int,
             "description": f"**Code:** `{code}`\n**Entered on:** <t:{int(datetime.now().timestamp())}:R>",
             "footer": {
-                "text": "jarshield audit logs - https://manage.jarshield.link/ • made by 4xnico"
+                "text": "jarshield audit logs - https://jarshield.link/manage/ • made by 4xnico"
             }
         }
         try:
@@ -330,7 +330,7 @@ def validate_code():
             "color": color_int,
             "description": f"**Project:** {project_name}\n**User:** `{rec['tester_uuid']}`{note_str}\n**Code used:** `{code}`\n**Accessed on:** <t:{int(datetime.now().timestamp())}:R>",
             "footer": {
-                "text": f"jarshield audit logs - https://manage.jarshield.link/ • made by 4xnico"
+                "text": f"jarshield audit logs - https://jarshield.link/manage/ • made by 4xnico"
             }
         }
         try:
@@ -442,7 +442,7 @@ def update_project_webhook(project_id):
             "color": color_int,
             "description": f"**Changes**\n{changes_str}",
             "footer": {
-                "text": "jarshield audit logs - https://manage.jarshield.link/ • made by 4xnico"
+                "text": "jarshield audit logs - https://jarshield.link/manage/ • made by 4xnico"
             }
         }
         try:

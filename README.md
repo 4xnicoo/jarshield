@@ -1,7 +1,7 @@
 # jarshield server
 hello yes this is my jarshield server how are you
 <br>
-this is being hosted at: https://api.jarshield.link
+this is being hosted at: https://jarshield.link/api
 
 ## Requirements:
 ```
