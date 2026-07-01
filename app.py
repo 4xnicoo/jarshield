@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app, resources={r"/api/*": {"origins": [
     "https://jarshield.link",
     "https://www.jarshield.link",
@@ -495,6 +495,13 @@ def remove_tester(project_id, tester_uuid):
     db_delete("project_testers", {"project_id": f"eq.{project_id}", "tester_uuid": f"eq.{tester_uuid}"})
     log_audit(project_id, request.user_id, tester_uuid, "remove_tester", True, None, request.remote_addr)
     return jsonify({"success": True})
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_frontend(path):
+    if path.startswith("api/"):
+        return jsonify({"error": "not_found"}), 404
+    return app.send_static_file("index.html")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
